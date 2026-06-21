@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - aircon_data:/app/data
+    environment:
+      DATABASE_URL: sqlite:////app/data/aircon.db
+    networks:
+      - aircon_net
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    depends_on:
+      - backend
+    networks:
+      - aircon_net
+
+networks:
+  aircon_net:
+    driver: bridge
+
+volumes:
+  aircon_data:
