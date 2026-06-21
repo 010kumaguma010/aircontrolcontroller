@@ -27,13 +27,21 @@ async def get_room_data() -> tuple[Optional[float], Optional[float], Optional[st
 
     try:
         temp_state = await fetch_state(HA_TEMP_ENTITY)
-        temp = float(temp_state["state"])
+        raw_state = temp_state.get("state", "")
+        try:
+            temp = float(raw_state)
+        except (ValueError, TypeError):
+            return None, None, None, False, f"センサー値が無効です（state: {raw_state!r}）。センサーがオフラインの可能性があります"
+
         observed_at = temp_state.get("last_updated")
 
         humidity = None
         if HA_HUMID_ENTITY:
             humid_state = await fetch_state(HA_HUMID_ENTITY)
-            humidity = float(humid_state["state"])
+            try:
+                humidity = float(humid_state.get("state", ""))
+            except (ValueError, TypeError):
+                humidity = None  # 湿度は表示用のみ。取得不可でも処理継続
 
         is_stale = False
         if observed_at:

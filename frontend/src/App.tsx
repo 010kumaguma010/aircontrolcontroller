@@ -50,7 +50,15 @@ export default function App() {
       const result = await api.simulate(targetTemp, arrivalTime);
       setSimResult(result);
     } catch (e) {
-      setSimResult({ start_time: null, strong_duration_min: null, switch_time: null, predicted_curve: [], warning: String(e) });
+      let warning = "シミュレーションに失敗しました";
+      try {
+        const msg = e instanceof Error ? e.message : String(e);
+        const parsed = JSON.parse(msg);
+        if (parsed.detail) warning = parsed.detail;
+      } catch {
+        if (e instanceof Error) warning = e.message;
+      }
+      setSimResult({ start_time: null, strong_duration_min: null, switch_time: null, predicted_curve: [], warning });
     } finally {
       setLoadingSimulate(false);
     }

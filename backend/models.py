@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
 
@@ -31,7 +31,7 @@ class ProfileResponse(BaseModel):
 class ProfileUpdate(BaseModel):
     room_name: str
     tatami_size: float
-    insulation_level: str
+    insulation_level: Literal["木造", "RC造", "その他"]
     aircon_cooling_kw: float
     occupant_load: float
 

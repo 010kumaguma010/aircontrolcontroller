@@ -33,16 +33,22 @@ function formatHour(time: string) {
 export default function TempChart({ forecast, predictedCurve, targetTemp }: Props) {
   const forecastData = forecast.map((f) => ({
     label: formatHour(f.time),
+    time: f.time,
     outside: f.temperature,
     efficiency: f.efficiency,
     dot: EFFICIENCY_COLOR[f.efficiency],
   }));
 
-  const curveMap = new Map(predictedCurve.map((p) => [p.time, p.predicted_temp]));
+  // curveMap: hour number → predicted temp (first point of each hour)
+  const curveMap = new Map<number, number>();
+  for (const p of predictedCurve) {
+    const h = parseInt(p.time.split(":")[0], 10);
+    if (!curveMap.has(h)) curveMap.set(h, p.predicted_temp);
+  }
 
   const merged = forecastData.map((d) => ({
     ...d,
-    predicted: curveMap.get(d.label) ?? null,
+    predicted: curveMap.get(new Date(d.time).getHours()) ?? null,
   }));
 
   return (
