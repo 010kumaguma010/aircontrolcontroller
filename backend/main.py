@@ -3,18 +3,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routers import status, profile, simulate
 
 app = FastAPI(title="冷房タイミングガイド API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# フロントエンドは常にnginx/vite経由の同一オリジンでAPIを呼び出すため、
+# ブラウザからのクロスオリジンアクセスを許可するCORS設定は不要（設計書2.9のセキュリティ方針）
 
 
 @app.on_event("startup")

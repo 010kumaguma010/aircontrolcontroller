@@ -31,4 +31,5 @@ async def simulate(body: SimulateRequest, db: Session = Depends(get_db)):
         tatami_size=profile.tatami_size,
         aircon_kw=profile.aircon_cooling_kw,
         insulation_level=profile.insulation_level,
+        occupant_load=profile.occupant_load,
     )

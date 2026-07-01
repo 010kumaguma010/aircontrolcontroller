@@ -106,6 +106,8 @@ def simulate(current_temp, target_temp, outside_temp, tatami_size, aircon_kw):
 期待値: 到達時間 ≈ 19.4分
 ```
 
+> 実装補足（本サマリー作成後に確定）: 上記は`duration_min`（到達時間）の計算のみ。実際の`start_time`/`switch_time`の逆算では、切替時刻を到着予定時刻の15分前（`ARRIVAL_BUFFER_MIN`）に設定する。単純に切替時刻=到着予定時刻として逆算すると維持運転の余裕がなくなるため。また`OCCUPANT_LOAD_KW`は実装ではハードコードせず、部屋プロファイルの`occupant_load`フィールドから読む（値自体は初期値0.3固定で運用）。詳細は`aircon-timing-spec-internal.md`の2.4.2を参照。
+
 ## 6. UI要件（要点のみ）
 
 - 現在室温・湿度・**取得時刻（タイムスタンプ）**を表示
