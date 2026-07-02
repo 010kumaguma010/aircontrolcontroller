@@ -57,7 +57,7 @@ async def fetch_forecast() -> list[HourlyForecast]:
 
 
 def get_temp_at_hour(forecast: list[HourlyForecast], hour: int) -> float:
-    """到着時刻に最も近い時間帯の外気温を返す。見つからない場合は 30.0℃。"""
+    """指定した時間帯（運転開始時刻の時など）の外気温を返す。見つからない場合は 30.0℃。"""
     return next(
         (f.temperature for f in forecast if datetime.fromisoformat(f.time).hour == hour),
         30.0,

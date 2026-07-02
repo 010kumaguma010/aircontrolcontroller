@@ -1,7 +1,17 @@
 from datetime import datetime, timedelta, time as dt_time
 from typing import Optional
+from zoneinfo import ZoneInfo
 from models import CurvePoint, HourlyForecast, SimulateResponse
 from services.openmeteo import get_temp_at_hour
+
+# Open-Meteoの予報時刻はAsia/Tokyo固定（naiveなローカル時刻文字列）のため、
+# 効率窓との比較に使う「現在時刻」もホストOSのタイムゾーン設定に依存せずAsia/Tokyoで固定する
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST).replace(tzinfo=None)
+
 
 # 断熱性係数 (kW/畳/℃) - 仮値、実測比較で補正
 INSULATION_COEF = 0.012
@@ -18,6 +28,11 @@ INSULATION_LEVEL_COEF = {
 DI_TARGET = 74.0
 RECOMMENDED_TEMP_MIN = 24.0
 RECOMMENDED_TEMP_MAX = 29.0
+
+# 効率窓が本日存在せず、窓による自然な上限が使えない場合にのみ適用する異常値ガード（8時間）。
+# 効率窓がある場合は window との比較（target_reached）で十分であり、窓が480分より長いケースを
+# 誤って弾かないよう、このチェックは窓なしのフォールバック時にのみ適用する。
+NO_WINDOW_SANITY_LIMIT_MIN = 480
 
 
 def recommend_target_temp(room_humidity: Optional[float]) -> Optional[float]:
@@ -80,7 +95,9 @@ def _physical_duration(
     heat_intrusion = effective_insulation * tatami_size * (outside_temp - target_temp)
     effective_cooling = aircon_kw - heat_intrusion - occupant_load
 
-    if effective_cooling <= 0:
+    # 浮動小数点誤差で理論上0のはずの値が極小の正の値になり、ゼロ除算に近い状態で
+    # 到達時間が天文学的な数値になるのを防ぐため、微小な閾値で判定する
+    if effective_cooling <= 1e-6:
         return {"warning": "目標室温への到達は困難です（外気温が高すぎる、またはエアコン能力不足）"}
 
     thermal_mass = THERMAL_MASS_PER_TATAMI * tatami_size
@@ -91,9 +108,6 @@ def _physical_duration(
 
     # kJ ÷ kW ÷ 60 = 分
     duration_min = heat_to_remove / effective_cooling / 60
-
-    if duration_min > 480:
-        return {"warning": "計算上、到達に8時間以上かかります。目標室温を見直してください"}
 
     return {"duration_min": duration_min, "warning": None}
 
@@ -108,7 +122,7 @@ def build_response(
     occupant_load: float,
     now: Optional[datetime] = None,
 ) -> SimulateResponse:
-    now = now or datetime.now()
+    now = now or _now_jst()
     empty = lambda warning: SimulateResponse(
         start_time=None,
         strong_duration_min=None,
@@ -157,6 +171,10 @@ def build_response(
     if window is not None:
         available_min = (window_end_dt - start_dt).total_seconds() / 60
     else:
+        if duration_min > NO_WINDOW_SANITY_LIMIT_MIN:
+            return empty(
+                f"{info_prefix} 計算上、到達に{NO_WINDOW_SANITY_LIMIT_MIN // 60}時間以上かかります。目標室温を見直してください"
+            )
         available_min = duration_min
 
     actual_duration = min(duration_min, available_min)
