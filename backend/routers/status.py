@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from models import StatusResponse
 from services.openmeteo import fetch_forecast
 from services.homeassistant import get_room_data
+from services.simulation import recommend_target_temp
 
 router = APIRouter()
 
@@ -18,4 +19,5 @@ async def get_status():
         observed_at=observed_at,
         is_stale=is_stale,
         ha_error=ha_error,
+        recommended_target_temp=recommend_target_temp(humidity),
     )

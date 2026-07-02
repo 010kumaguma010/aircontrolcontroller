@@ -13,7 +13,6 @@ export default function App() {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [simResult, setSimResult] = useState<SimulateResult | null>(null);
-  const [simTarget, setSimTarget] = useState(26.0);
 
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [loadingSimulate, setLoadingSimulate] = useState(false);
@@ -43,11 +42,10 @@ export default function App() {
     fetchStatus();
   }, [fetchStatus]);
 
-  const handleSimulate = async (targetTemp: number, arrivalTime: string) => {
+  const handleSimulate = async (targetTemp: number | null) => {
     setLoadingSimulate(true);
-    setSimTarget(targetTemp);
     try {
-      const result = await api.simulate(targetTemp, arrivalTime);
+      const result = await api.simulate(targetTemp);
       setSimResult(result);
     } catch (e) {
       let warning = "シミュレーションに失敗しました";
@@ -58,7 +56,15 @@ export default function App() {
       } catch {
         if (e instanceof Error) warning = e.message;
       }
-      setSimResult({ start_time: null, strong_duration_min: null, switch_time: null, predicted_curve: [], warning });
+      setSimResult({
+        start_time: null,
+        strong_duration_min: null,
+        switch_time: null,
+        used_target_temp: null,
+        target_reached: null,
+        predicted_curve: [],
+        warning,
+      });
     } finally {
       setLoadingSimulate(false);
     }
@@ -105,6 +111,7 @@ export default function App() {
             result={simResult}
             loading={loadingSimulate}
             hasRoomTemp={status?.current_room_temp !== null && status?.current_room_temp !== undefined}
+            recommendedTargetTemp={status?.recommended_target_temp ?? null}
           />
         </section>
 
@@ -113,7 +120,7 @@ export default function App() {
           <TempChart
             forecast={forecast}
             predictedCurve={simResult?.predicted_curve ?? []}
-            targetTemp={simTarget}
+            targetTemp={simResult?.used_target_temp ?? status?.recommended_target_temp ?? 26.0}
           />
         )}
 

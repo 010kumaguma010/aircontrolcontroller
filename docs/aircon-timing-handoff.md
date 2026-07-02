@@ -1,6 +1,6 @@
 # 冷房タイミングガイド（内部版） — 実装引き継ぎサマリー
 
-作成日: 2026-06-19
+作成日: 2026-06-19（2026-07-02改訂: モデルを効率窓ベースに全面変更）
 対象ドキュメント: `aircon-timing-spec-internal.md`（要件定義・基本設計、確定済み）
 
 このファイルは、別セッション/別ツールで実装を始める際に必要な情報を一箇所にまとめたものです。詳細は本体の設計書を参照してください。
@@ -9,7 +9,7 @@
 
 ## 1. 何を作るか（1行で）
 
-Home Assistant経由のNature Remo実測値 ＋ Open-Meteo外気温予報を使い、ワンルームの冷房を「いつ強く運転開始して、いつ維持運転に切り替えるべきか」を計算して表示する、自分専用のWebツール。
+Home Assistant経由のNature Remo実測値 ＋ Open-Meteo外気温予報を使い、ワンルームの冷房を「本日の効率窓（外気温が低く効率の良い時間帯）を使って、いつ強く運転開始し、いつ維持運転に切り替えるべきか」を計算して表示する、自分専用のWebツール。到着予定時刻からの逆算は行わない（廃止済み）。
 
 ## 2. システム構成
 
@@ -41,11 +41,12 @@ home lab Dockerホスト (192.168.100.30)
 
 **実装前に確認が必要なこと：** HA上でNature Remoの室温/湿度センサーのentity_idを確認しておく（設計書4章で唯一残っていた確認系タスク）。
 
-## 4. バックエンドAPI仕様（実装対象）
+## 4. バックエンドAPI仕様（実装済み）
 
 ```
 GET  /api/status
-  → { outside_temp_forecast: [...], current_room_temp, current_humidity, observed_at }
+  → { outside_temp_forecast: [...], current_room_temp, current_humidity, observed_at,
+      is_stale, ha_error, recommended_target_temp }
 
 GET  /api/profile
   → { room_name, tatami_size, insulation_level, aircon_cooling_kw, occupant_load, updated_at }
@@ -55,64 +56,79 @@ POST /api/profile
   → 更新後のプロファイルを返す
 
 POST /api/simulate
-  Body: { target_temp, arrival_time }
+  Body: { target_temp }  ※ 省略可。省略時は室内湿度からのおすすめ値を使用
   → {
       start_time,
       strong_duration_min,
       switch_time,
+      used_target_temp,
+      target_reached,
       predicted_curve: [{ time, predicted_temp }],
-      warning: null | "到達困難" | "計算時間が長すぎます" など
+      warning: null | "到達困難" | "本日の効率窓は終了" | "効率窓内に到達不可" など
     }
 ```
 
-## 5. 予冷シミュレーションの計算ロジック（そのまま実装可能な形）
+到着予定時刻（`arrival_time`）は廃止済み。効率窓（本日最長の高効率連続時間帯）を検出し、運転開始・切替時刻を決定する。
+
+## 5. 予冷シミュレーションの計算ロジック（実装済みロジックのサマリー）
+
+実装は `backend/services/simulation.py` を参照。要点：
 
 ```python
 # 単位: kW, kJ, ℃, 分 を明示的に統一
 
-# --- 仮係数（初期値。運用しながら補正） ---
-INSULATION_COEF = 0.012      # kW / 畳 / ℃
-OCCUPANT_LOAD_KW = 0.3       # kW固定（居住者1名+PC等を想定。コメントで根拠を残す）
-THERMAL_MASS_PER_TATAMI = 60  # kJ / ℃ / 畳
+INSULATION_COEF = 0.012        # kW / 畳 / ℃
+THERMAL_MASS_PER_TATAMI = 60    # kJ / ℃ / 畳
+INSULATION_LEVEL_COEF = {"木造": 1.0, "RC造": 0.7, "その他": 0.9}
 
-def simulate(current_temp, target_temp, outside_temp, tatami_size, aircon_kw):
-    # ① 熱侵入
-    heat_intrusion = INSULATION_COEF * tatami_size * (outside_temp - target_temp)
+# Step A: 当日の外気温予報からexcellent/good連続区間（効率窓）を検出し、最長のものを採用
+# Step B: 運転開始時刻を決定
+#   - 効率窓の中にいる → 今すぐ開始
+#   - 効率窓がこれから来る → 効率窓の開始時刻
+#   - 効率窓が既に終了 → シミュレーション不可（警告）
+#   - 効率窓が本日存在しない → 参考値として今から開始した場合を計算
 
-    # ② 実効冷房能力
-    effective_cooling = aircon_kw - heat_intrusion - OCCUPANT_LOAD_KW
+def physical_duration(current_temp, target_temp, outside_temp, tatami_size, aircon_kw, insulation_level, occupant_load):
+    coef = INSULATION_LEVEL_COEF.get(insulation_level, 1.0)
+    heat_intrusion = INSULATION_COEF * coef * tatami_size * (outside_temp - target_temp)
+    effective_cooling = aircon_kw - heat_intrusion - occupant_load  # occupant_loadはプロファイルの保存値
 
     if effective_cooling <= 0:
         return {"warning": "目標室温への到達は困難です（外気温が高すぎる、またはエアコン能力不足）"}
 
-    # ③ 熱容量
-    thermal_mass = THERMAL_MASS_PER_TATAMI * tatami_size  # kJ/℃
-
-    # ④ 除去すべき熱量
-    heat_to_remove = thermal_mass * (current_temp - target_temp)  # kJ
-
-    # ⑤ 到達時間（分） kW = kJ/秒 なので kJ ÷ kW ÷ 60 = 分
+    thermal_mass = THERMAL_MASS_PER_TATAMI * tatami_size
+    heat_to_remove = thermal_mass * (current_temp - target_temp)
     duration_min = heat_to_remove / effective_cooling / 60
 
     if duration_min > 480:
-        return {"warning": "計算上、到達に8時間以上かかります。目標室温や到着時刻を見直してください"}
+        return {"warning": "計算上、到達に8時間以上かかります。目標室温を見直してください"}
 
     return {"duration_min": duration_min, "warning": None}
+
+# Step D: 切替時刻 = min(効率窓の終了時刻, 運転開始時刻 + 到達時間)
+#   到達時間の方が長ければ target_reached=False として警告
 ```
 
-**検証済みの数値例**（このまま単体テストに使える）：
+**目標室温おすすめ値（不快指数DIベース）**:
+```python
+DI_TARGET = 74.0
+def recommend_target_temp(room_humidity):
+    h = room_humidity
+    t = (DI_TARGET - 46.3 + 0.143 * h) / (0.81 + 0.0099 * h)
+    return clamp(round(t * 2) / 2, 24.0, 29.0)
+```
+
+**検証済みの数値例**：
 ```
 入力: 畳数14, 外気温33℃, 目標26℃, 現在29.5℃, エアコン4.0kW
 期待値: 到達時間 ≈ 19.4分
 ```
 
-> 実装補足（本サマリー作成後に確定）: 上記は`duration_min`（到達時間）の計算のみ。実際の`start_time`/`switch_time`の逆算では、切替時刻を到着予定時刻の15分前（`ARRIVAL_BUFFER_MIN`）に設定する。単純に切替時刻=到着予定時刻として逆算すると維持運転の余裕がなくなるため。また`OCCUPANT_LOAD_KW`は実装ではハードコードせず、部屋プロファイルの`occupant_load`フィールドから読む（値自体は初期値0.3固定で運用）。詳細は`aircon-timing-spec-internal.md`の2.4.2を参照。
-
 ## 6. UI要件（要点のみ）
 
 - 現在室温・湿度・**取得時刻（タイムスタンプ）**を表示
 - 取得値が**30分以上前**なら「データが古い」と警告表示
-- 目標室温・到着予定時刻を入力 → [計算する/再計算]ボタン
+- 目標室温を入力（未入力時はおすすめ値を使用、上書き可）→ [計算する/再計算]ボタン。到着予定時刻の入力欄は廃止
 - 結果表示：推奨運転開始時刻、強運転継続時間、維持切替時刻
 - グラフ：外気温×室温の推移（予測ライン／実測ライン重ね表示）
 - シミュレーション結果に「簡易計算のため目安です」の注記
@@ -124,7 +140,6 @@ def simulate(current_temp, target_temp, outside_temp, tatami_size, aircon_kw):
 - 複数部屋・複数プロファイル管理
 - LLM/AI連携によるアドバイス文生成
 - 暖房（冬季）対応
-- 帰宅時間の自動取得（カレンダー連携等）
 - 学習による係数自動補正（最初は仮置き係数固定で運用）
 
 ## 8. 実装時に決めればよい事項（設計書では未確定のまま、ブロッカーではない）

@@ -17,6 +17,7 @@ class StatusResponse(BaseModel):
     observed_at: Optional[str]
     is_stale: bool
     ha_error: Optional[str] = None
+    recommended_target_temp: Optional[float] = None
 
 
 class ProfileResponse(BaseModel):
@@ -42,13 +43,15 @@ class CurvePoint(BaseModel):
 
 
 class SimulateRequest(BaseModel):
-    target_temp: float
-    arrival_time: str  # HH:MM format
+    # 未指定の場合、現在の室内湿度から不快指数(DI)ベースでおすすめ値を算出して使用する
+    target_temp: Optional[float] = None
 
 
 class SimulateResponse(BaseModel):
     start_time: Optional[str]
     strong_duration_min: Optional[float]
     switch_time: Optional[str]
+    used_target_temp: Optional[float]
+    target_reached: Optional[bool]
     predicted_curve: list[CurvePoint]
     warning: Optional[str]

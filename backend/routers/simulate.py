@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from models import SimulateRequest, SimulateResponse
 from database import get_db, ProfileRecord
 from services.homeassistant import get_room_data
-from services.openmeteo import fetch_forecast, get_temp_at_hour
-from services.simulation import build_response
+from services.openmeteo import fetch_forecast
+from services.simulation import build_response, recommend_target_temp
 
 router = APIRouter()
 
@@ -15,19 +15,25 @@ async def simulate(body: SimulateRequest, db: Session = Depends(get_db)):
     if not profile:
         raise HTTPException(status_code=400, detail="部屋プロファイルが未登録です")
 
-    current_temp, _, _, _, ha_error = await get_room_data()
+    current_temp, humidity, _, _, ha_error = await get_room_data()
     if current_temp is None:
         raise HTTPException(status_code=503, detail=f"室温を取得できません: {ha_error}")
 
+    target_temp = body.target_temp
+    if target_temp is None:
+        target_temp = recommend_target_temp(humidity)
+        if target_temp is None:
+            raise HTTPException(
+                status_code=400,
+                detail="目標室温が未指定で、湿度からのおすすめ値も算出できません。目標室温を入力してください。",
+            )
+
     forecast = await fetch_forecast()
-    arrival_hour = int(body.arrival_time.split(":")[0])
-    outside_temp = get_temp_at_hour(forecast, arrival_hour)
 
     return build_response(
         current_temp=current_temp,
-        target_temp=body.target_temp,
-        arrival_time_str=body.arrival_time,
-        outside_temp=outside_temp,
+        target_temp=target_temp,
+        forecast=forecast,
         tatami_size=profile.tatami_size,
         aircon_kw=profile.aircon_cooling_kw,
         insulation_level=profile.insulation_level,

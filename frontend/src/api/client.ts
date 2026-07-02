@@ -14,6 +14,7 @@ export interface StatusData {
   observed_at: string | null;
   is_stale: boolean;
   ha_error: string | null;
+  recommended_target_temp: number | null;
 }
 
 export interface ProfileData {
@@ -34,6 +35,8 @@ export interface SimulateResult {
   start_time: string | null;
   strong_duration_min: number | null;
   switch_time: string | null;
+  used_target_temp: number | null;
+  target_reached: boolean | null;
   predicted_curve: CurvePoint[];
   warning: string | null;
 }
@@ -59,6 +62,6 @@ export const api = {
   getProfile: () => get<ProfileData>("/profile"),
   updateProfile: (data: Omit<ProfileData, "updated_at">) =>
     post<ProfileData>("/profile", data),
-  simulate: (target_temp: number, arrival_time: string) =>
-    post<SimulateResult>("/simulate", { target_temp, arrival_time }),
+  simulate: (target_temp: number | null) =>
+    post<SimulateResult>("/simulate", { target_temp }),
 };
